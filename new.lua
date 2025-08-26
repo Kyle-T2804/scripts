@@ -5962,6 +5962,52 @@ modules:CreateToggle({
 		end
 	end
 })
+-- Team include/exclude controls (affect targeting)
+local includeTeams = modules:CreateTextList({
+	Name = 'Include Teams',
+	Tooltip = 'Only target players on these teams (leave empty to allow all)'
+})
+local excludeTeams = modules:CreateTextList({
+	Name = 'Exclude Teams',
+	Tooltip = 'Never target players on these teams'
+})
+
+-- Auto-populate team lists from Teams service and keep them updated
+local Teams = game:GetService('Teams')
+local function repopulateTeams(opt)
+	local names = {}
+	for _, team in Teams:GetChildren() do
+		if team:IsA('Team') then
+			table.insert(names, team.Name)
+		end
+	end
+	table.sort(names)
+	local enabled = {}
+	for _, v in opt.ListEnabled do
+		if table.find(names, v) then
+			table.insert(enabled, v)
+		end
+	end
+	opt.List = names
+	opt.ListEnabled = enabled
+	opt:ChangeValue()
+end
+
+repopulateTeams(includeTeams)
+repopulateTeams(excludeTeams)
+
+Teams.ChildAdded:Connect(function(obj)
+	if obj:IsA('Team') then
+		repopulateTeams(includeTeams)
+		repopulateTeams(excludeTeams)
+	end
+end)
+Teams.ChildRemoved:Connect(function(obj)
+	if obj:IsA('Team') then
+		repopulateTeams(includeTeams)
+		repopulateTeams(excludeTeams)
+	end
+end)
 
 --[[
 	GUI Settings
