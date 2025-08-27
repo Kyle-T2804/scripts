@@ -5962,6 +5962,7 @@ modules:CreateToggle({
 		end
 	end
 })
+
 -- Team include/exclude controls (affect targeting)
 local includeTeams = modules:CreateTextList({
 	Name = 'Include Teams',
