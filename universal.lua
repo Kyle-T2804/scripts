@@ -1645,7 +1645,135 @@ run(function()
 		end
 	})
 end)
-	
+
+run(function()
+	local TBSModifier
+	local Multiplier
+	local IgnoredGuns
+		local populating = false -- guard to prevent spam reapply during batch updates
+	local originals = {}
+	local alwaysIgnored = {
+		["Minigun"] = true,
+		["Glock 17"] = true,
+		["Pistol"] = true,
+		["Kriss Vector"] = true
+	}
+
+	-- Fallback list if GunSettings cannot be read in time
+	local fallbackGuns = {
+		"AA-12","ACR","AK-47","AKS-74U","APC556 PDW","ARX-200","BP-556","BP-77","BR-762",
+		"Burning Fang","EVO 3 Micro","Faketech Origin","Freeze Gun","Golden Hawk","Honey Badger","KV-12",
+		"Kriss Vector","Laser Pistol","Laser Rifle","Limb","M110","M16A4","M4","M416","M9",
+		"Minigun","PDW-28","Pistol","SMG25","SMG46","SMG9","SMG9X","SW-762","Spas - 12","XM250"
+	}
+
+	local function getGunSettingsFolder()
+		local ok, folder = pcall(function()
+			return replicatedStorage:WaitForChild('GunSettings', 1)
+		end)
+		return ok and folder or nil
+	end
+
+	-- No dynamic repopulation function needed when using a fixed fallback list
+
+	local function isIgnored(gunName)
+		if alwaysIgnored[gunName] then return true end
+		return IgnoredGuns and table.find(IgnoredGuns.ListEnabled, gunName) ~= nil
+	end
+
+	local function restore()
+		local folder = getGunSettingsFolder()
+		if not folder then
+			table.clear(originals)
+			return
+		end
+		for name, orig in originals do
+			local module = folder:FindFirstChild(name)
+			if module and module:IsA('ModuleScript') then
+				local ok, settings = pcall(require, module)
+				if ok and typeof(settings) == 'table' and settings.TBS then
+					settings.TBS = orig
+				end
+			end
+		end
+		table.clear(originals)
+	end
+
+	local function apply()
+		local folder = getGunSettingsFolder()
+		if not folder then return end
+		for _, module in ipairs(folder:GetChildren()) do
+			if module:IsA('ModuleScript') then
+				local gunName = module.Name
+				if isIgnored(gunName) then continue end
+				local ok, settings = pcall(require, module)
+				if ok and typeof(settings) == 'table' and settings.TBS then
+					if originals[gunName] == nil then
+						originals[gunName] = settings.TBS
+					end
+					settings.TBS = originals[gunName] * Multiplier.Value
+				end
+			end
+		end
+	end
+
+	TBSModifier = vape.Categories.Combat:CreateModule({
+		Name = 'TBSModifier',
+		Function = function(callback)
+			if callback then
+				apply()
+			else
+				restore()
+			end
+		end,
+		Tooltip = 'Adjusts Time Between Shots for guns. Always ignores Minigun, Glock 17, Pistol, Kriss Vector.'
+	})
+
+	Multiplier = TBSModifier:CreateSlider({
+		Name = 'TBS Multiplier',
+		Min = 0.1,
+		Max = 1,
+		Decimal = 100,
+		Default = 0.7,
+		Function = function()
+			if TBSModifier.Enabled then
+				apply()
+			end
+		end,
+		Tooltip = 'Lower = faster fire rate (0.7 means 30% faster).'
+	})
+
+	IgnoredGuns = TBSModifier:CreateTextList({
+		Name = 'Ignored Guns',
+		Placeholder = 'Gun name...',
+		Function = function()
+			-- Skip reapply while we're batch-populating the list
+			if populating then return end
+			if TBSModifier.Enabled then
+				restore()
+				apply()
+			end
+		end,
+		Tooltip = 'Additional guns to exclude. Minigun, Glock 17, Pistol, Kriss Vector are always excluded.'
+	})
+
+	-- Populate the TextList with the provided weapons (excluding always-ignored)
+	local names = {
+		"AA-12","ACR","AK-47","AKS-74U","APC556 PDW","ARX-200","BP-556","BP-77","BR-762",
+		"Burning Fang","EVO 3 Micro","Faketech Origin","Freeze Gun","Golden Hawk","Honey Badger","KV-12",
+		"Laser Pistol","Laser Rifle","Limb","M110","M16A4","M4","M416","M9",
+		"PDW-28","SMG25","SMG46","SMG9","SMG9X","SW-762","Spas - 12","XM250"
+	}
+	-- Ensure UI reflects this list per TextList API: set List, keep all disabled initially, then refresh
+	task.defer(function()
+		populating = true
+		IgnoredGuns.List = table.clone(names)
+		IgnoredGuns.ListEnabled = {}
+		if IgnoredGuns.ChangeValue then IgnoredGuns:ChangeValue() end
+		populating = false
+	end)
+end)
+
 run(function()
 	local AntiFall
 	local Method
@@ -2190,6 +2318,7 @@ run(function()
 	local Targets
 	local TargetPart
 	local Expand
+	local NoCollideMassless
 	local modified = {}
 	
 	HitBoxes = vape.Categories.Blatant:CreateModule({
@@ -2202,17 +2331,29 @@ run(function()
 							if not Targets.Players.Enabled and v.Player then continue end
 							if not Targets.NPCs.Enabled and v.NPC then continue end
 							local part = v[TargetPart.Value]
-							if not modified[part] then
-								modified[part] = part.Size
+							if part then
+								if not modified[part] then
+									modified[part] = {
+										size = part.Size,
+										massless = part.Massless,
+										collide = part.CanCollide
+									}
+								end
+								part.Size = modified[part].size + Vector3.new(Expand.Value, Expand.Value, Expand.Value)
+								if NoCollideMassless and NoCollideMassless.Enabled then
+									part.Massless = true
+									part.CanCollide = false
+								end
 							end
-							part.Size = modified[part] + Vector3.new(Expand.Value, Expand.Value, Expand.Value)
 						end
 					end
 					task.wait()
 				until not HitBoxes.Enabled
 			else
 				for i, v in modified do
-					i.Size = v
+					i.Size = v.size
+					i.Massless = v.massless
+					i.CanCollide = v.collide
 				end
 				table.clear(modified)
 			end
@@ -2232,6 +2373,10 @@ run(function()
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
+	})
+	NoCollideMassless = HitBoxes:CreateToggle({
+		Name = 'Massless + NoCollide',
+		Tooltip = 'When enabled, sets parts to Massless and disables collisions while expanded.'
 	})
 end)
 	
